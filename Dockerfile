@@ -1,5 +1,5 @@
 # Используем образ с уже установленным Playwright
-FROM mcr.microsoft.com/playwright/python:v1.57.0-jammy
+FROM mcr.microsoft.com/playwright/python:v1.48.0-jammy
 
 WORKDIR /app
 
