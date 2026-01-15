@@ -1,21 +1,46 @@
+# main.py
 from fastapi import FastAPI, Query
 from playwright.async_api import async_playwright
+import asyncio
 
 app = FastAPI()
 
 @app.get("/resolve")
 async def resolve(url: str = Query(...)):
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        # Запускаем Chromium с no-sandbox, важно для Docker/Render
+        browser = await p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-setuid-sandbox"]
+        )
         context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120 Safari/537.36"
+            )
         )
         page = await context.new_page()
 
-        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        # Ловим все редиректы через JS
+        final_url = url
+
+        def on_frame_navigated(frame):
+            nonlocal final_url
+            final_url = frame.url
+
+        page.on("framenavigated", on_frame_navigated)
+
+        # Переходим по ссылке
+        try:
+            await page.goto(url, wait_until="networkidle", timeout=30000)
+        except Exception:
+            # Если какой-то редирект не сработал, всё равно продолжаем
+            pass
+
+        # Ждем немного для JS редиректов
         await page.wait_for_timeout(3000)
 
-        final_url = page.url
         await browser.close()
 
         return {
