@@ -7,17 +7,20 @@ app = FastAPI()
 
 @app.get("/resolve")
 async def resolve(url: str = Query(...)):
-    async with async_playwright() as p:
-        # Убираем executable_path - Playwright сам найдет браузер
-        browser = await p.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",  # Важно для Docker
-                "--disable-gpu"
-            ]
-        )
+    try:
+        async with async_playwright() as p:
+            # Убираем executable_path - Playwright сам найдет браузер
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",  # Важно для Docker
+                    "--disable-gpu",
+                    "--disable-web-security",
+                    "--disable-features=IsolateOrigins,site-per-process"
+                ]
+            )
         context = await browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -46,4 +49,10 @@ async def resolve(url: str = Query(...)):
         return {
             "dirty": url,
             "clean": final_url
+        }
+    except Exception as e:
+        return {
+            "dirty": url,
+            "clean": url,
+            "error": str(e)
         }
