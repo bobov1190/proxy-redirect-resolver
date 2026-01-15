@@ -15,7 +15,8 @@ COPY requirements.txt ./
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # Устанавливаем Playwright Chromium
-RUN playwright install --with-deps chromium
+RUN playwright install chromium
+RUN playwright install-deps chromium
 
 # Копируем код
 COPY . .

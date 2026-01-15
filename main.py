@@ -8,11 +8,15 @@ app = FastAPI()
 @app.get("/resolve")
 async def resolve(url: str = Query(...)):
     async with async_playwright() as p:
-        # Запускаем Chromium с no-sandbox, важно для Docker/Render
+        # Убираем executable_path - Playwright сам найдет браузер
         browser = await p.chromium.launch(
             headless=True,
-            args=["--no-sandbox", "--disable-setuid-sandbox"],
-            executable_path="/ms-playwright/chromium/chrome-linux/chrome"
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",  # Важно для Docker
+                "--disable-gpu"
+            ]
         )
         context = await browser.new_context(
             user_agent=(
@@ -23,7 +27,6 @@ async def resolve(url: str = Query(...)):
         )
         page = await context.new_page()
 
-        # Ловим все редиректы через JS
         final_url = url
 
         def on_frame_navigated(frame):
@@ -32,16 +35,12 @@ async def resolve(url: str = Query(...)):
 
         page.on("framenavigated", on_frame_navigated)
 
-        # Переходим по ссылке
         try:
             await page.goto(url, wait_until="networkidle", timeout=30000)
         except Exception:
-            # Если какой-то редирект не сработал, всё равно продолжаем
             pass
 
-        # Ждем немного для JS редиректов
         await page.wait_for_timeout(3000)
-
         await browser.close()
 
         return {
