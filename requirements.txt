@@ -1,6 +1,6 @@
 fastapi
-uvicorn[standard]
+uvicorn
 playwright
-pyee
 httpx
-
+pyee
+python-dotenv
