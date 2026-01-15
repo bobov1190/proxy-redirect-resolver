@@ -1,6 +1,6 @@
 FROM python:3.13-slim
 
-# Устанавливаем зависимости для Linux
+# Устанавливаем зависимости Linux для Playwright
 RUN apt-get update && apt-get install -y \
     wget curl gnupg ca-certificates libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libxkbcommon0 \
     libxcomposite1 libxdamage1 libxrandr2 libgbm1 libgtk-3-0 libasound2 libpangocairo-1.0-0 \
@@ -9,12 +9,14 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
+# Копируем зависимости и устанавливаем их
 COPY requirements.txt .
 RUN pip install --upgrade pip && \
     pip install -r requirements.txt
 
-# Устанавливаем Playwright браузеры
-RUN playwright install --with-deps chromium
+# Устанавливаем Playwright браузеры в каталог /ms-playwright
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN python -m playwright install --with-deps chromium
 
 COPY . .
 
@@ -22,5 +24,5 @@ COPY . .
 ENV PORT=8000
 EXPOSE 8000
 
-# Запуск
+# Запуск приложения
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
