@@ -11,7 +11,8 @@ async def resolve(url: str = Query(...)):
         # Запускаем Chromium с no-sandbox, важно для Docker/Render
         browser = await p.chromium.launch(
             headless=True,
-            args=["--no-sandbox", "--disable-setuid-sandbox"]
+            args=["--no-sandbox", "--disable-setuid-sandbox"],
+            executable_path="/ms-playwright/chromium/chrome-linux/chrome"
         )
         context = await browser.new_context(
             user_agent=(
