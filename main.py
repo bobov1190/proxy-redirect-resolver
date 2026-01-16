@@ -3,6 +3,7 @@ from fastapi import FastAPI, Query
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 import httpx
 import asyncio
+import os
 
 app = FastAPI()
 
@@ -25,28 +26,23 @@ async def get_browser():
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
                 "--disable-software-rasterizer",
-                "--disable-extensions",
-                "--disable-background-networking",
-                "--disable-default-apps",
-                "--disable-sync",
-                "--metrics-recording-only",
-                "--mute-audio",
-                "--no-first-run",
-                "--safebrowsing-disable-auto-update",
-                "--disable-features=TranslateUI,BlinkGenPropertyTrees"
+                "--disable-extensions"
             ]
         )
     
     return _browser
 
+@app.get("/")
+async def root():
+    return {"status": "ok", "message": "Proxy Redirect Resolver API"}
+
 @app.get("/resolve")
 async def resolve(url: str = Query(...)):
-    # Шаг 1: Быстрая HTTP попытка
+    # Шаг 1: HTTP попытка
     try:
         async with httpx.AsyncClient(
             follow_redirects=True, 
-            timeout=5.0,
-            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+            timeout=5.0
         ) as client:
             response = await client.head(url, follow_redirects=True)
             intermediate_url = str(response.url)
@@ -61,36 +57,31 @@ async def resolve(url: str = Query(...)):
         print(f"HTTP failed: {e}")
         intermediate_url = url
 
-    # Шаг 2: Браузер только если нужно
+    # Шаг 2: Браузер
     context = None
     try:
         browser = await get_browser()
         
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            ignore_https_errors=True,
-            java_script_enabled=True,
-            # Отключаем ненужное для скорости
-            bypass_csp=True,
-            locale="en-US"
+            ignore_https_errors=True
         )
         
         page = await context.new_page()
         
-        # Блокируем тяжелые ресурсы для экономии
+        # Блокируем тяжелые ресурсы
         await page.route("**/*", lambda route: (
             route.abort() if route.request.resource_type in ["image", "stylesheet", "font", "media"]
             else route.continue_()
         ))
         
-        # Быстрая загрузка
         try:
             await page.goto(
                 intermediate_url, 
-                wait_until="commit",  # Самое быстрое
+                wait_until="domcontentloaded",
                 timeout=10000
             )
-            await asyncio.sleep(1.5)  # Короткая пауза для JS
+            await asyncio.sleep(1.5)
             
             final_url = page.url
         except PlaywrightTimeout:
@@ -125,3 +116,9 @@ async def shutdown_event():
         await _browser.close()
     if _playwright:
         await _playwright.stop()
+
+# Для запуска напрямую
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
