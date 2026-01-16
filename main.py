@@ -1,58 +1,102 @@
 # main.py
 from fastapi import FastAPI, Query
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 import httpx
 import asyncio
 
 app = FastAPI()
 
+# Глобальный Playwright для переиспользования
+_playwright = None
+_browser = None
+
+async def get_browser():
+    global _playwright, _browser
+    
+    if _browser is None or not _browser.is_connected():
+        if _playwright is None:
+            _playwright = await async_playwright().start()
+        
+        _browser = await _playwright.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+                "--disable-extensions",
+                "--disable-background-networking",
+                "--disable-default-apps",
+                "--disable-sync",
+                "--metrics-recording-only",
+                "--mute-audio",
+                "--no-first-run",
+                "--safebrowsing-disable-auto-update",
+                "--disable-features=TranslateUI,BlinkGenPropertyTrees"
+            ]
+        )
+    
+    return _browser
+
 @app.get("/resolve")
 async def resolve(url: str = Query(...)):
-    # Сначала пробуем простой HTTP редирект
+    # Шаг 1: Быстрая HTTP попытка
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as client:
-            response = await client.get(url)
+        async with httpx.AsyncClient(
+            follow_redirects=True, 
+            timeout=5.0,
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+        ) as client:
+            response = await client.head(url, follow_redirects=True)
             intermediate_url = str(response.url)
             
-            # Если это простой HTTP редирект - возвращаем
-            if intermediate_url != url and "javascript" not in intermediate_url.lower():
+            if intermediate_url != url:
                 return {
                     "dirty": url,
                     "clean": intermediate_url,
                     "method": "http"
                 }
     except Exception as e:
-        print(f"HTTP redirect failed: {e}")
+        print(f"HTTP failed: {e}")
         intermediate_url = url
 
-    # Если HTTP не помог или есть JS редирект - используем браузер
-    playwright = None
-    browser = None
-    
+    # Шаг 2: Браузер только если нужно
+    context = None
     try:
-        playwright = await async_playwright().start()
-        
-        browser = await playwright.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-        )
+        browser = await get_browser()
         
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            ignore_https_errors=True
+            ignore_https_errors=True,
+            java_script_enabled=True,
+            # Отключаем ненужное для скорости
+            bypass_csp=True,
+            locale="en-US"
         )
         
         page = await context.new_page()
         
-        # Загружаем страницу
-        await page.goto(intermediate_url, wait_until="domcontentloaded", timeout=15000)
-        await page.wait_for_timeout(2000)
+        # Блокируем тяжелые ресурсы для экономии
+        await page.route("**/*", lambda route: (
+            route.abort() if route.request.resource_type in ["image", "stylesheet", "font", "media"]
+            else route.continue_()
+        ))
         
-        final_url = page.url
+        # Быстрая загрузка
+        try:
+            await page.goto(
+                intermediate_url, 
+                wait_until="commit",  # Самое быстрое
+                timeout=10000
+            )
+            await asyncio.sleep(1.5)  # Короткая пауза для JS
+            
+            final_url = page.url
+        except PlaywrightTimeout:
+            final_url = page.url if page.url != "about:blank" else intermediate_url
         
         await context.close()
-        await browser.close()
-        await playwright.stop()
 
         return {
             "dirty": url,
@@ -61,17 +105,23 @@ async def resolve(url: str = Query(...)):
         }
         
     except Exception as e:
-        try:
-            if browser:
-                await browser.close()
-            if playwright:
-                await playwright.stop()
-        except:
-            pass
-            
+        if context:
+            try:
+                await context.close()
+            except:
+                pass
+        
         return {
             "dirty": url,
-            "clean": intermediate_url if intermediate_url != url else url,
+            "clean": intermediate_url,
             "error": str(e),
             "method": "fallback"
         }
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    global _browser, _playwright
+    if _browser:
+        await _browser.close()
+    if _playwright:
+        await _playwright.stop()
